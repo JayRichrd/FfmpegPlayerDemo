@@ -32,6 +32,8 @@ public class MainActivity extends AppCompatActivity implements PermissionUtil.Re
         videoBtv.setOnClickListener(v -> MainActivity.this.startActivity(new Intent(MainActivity.this, VideoActivity.class)));
         AppCompatButton audioBtv = findViewById(R.id.btv_audio_activity);
         audioBtv.setOnClickListener(v -> MainActivity.this.startActivity(new Intent(MainActivity.this, AudioActivity.class)));
+        AppCompatButton yuvVideoBtv = findViewById(R.id.btv_yuv_video_activity);
+        yuvVideoBtv.setOnClickListener(v -> MainActivity.this.startActivity(new Intent(MainActivity.this, YuvVideoActivity.class)));
     }
 
     @Override

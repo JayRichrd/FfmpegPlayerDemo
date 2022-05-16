@@ -6,10 +6,13 @@
 #include <SLES/OpenSLES.h>
 #include <SLES/OpenSLES_Android.h>
 #include <cerrno>
+#include <EGL/egl.h>
+#include <GLES2/gl2.h>
 
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN,"FFMPEG_AV_PRO",__VA_ARGS__)
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG,"FFMPEG_AV_PRO",__VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR,"FFMPEG_AV_PRO",__VA_ARGS__)
+#define GET_STR(x) #x
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -19,6 +22,37 @@ extern "C" {
 #include <libswresample/swresample.h>
 #include <libavutil/imgutils.h>
 }
+
+//顶点着色器glsl
+static const char *vertex_shader = GET_STR(
+        attribute vec4 aPosition;// 顶点坐标
+        attribute vec2 aTexCoord;// 材质顶点坐标
+        varying vec2 vTexCoord;// 输出的材质坐标
+        void main() {
+            vTexCoord = vec2(aTexCoord.x, 1.0 - aTexCoord.y);
+            gl_Position = aPosition;
+        }
+);
+
+static const char *fragment_yuv_420p = GET_STR(
+        precision mediump float;    //精度
+        varying vec2 vTexCoord;     //顶点着色器传递的坐标
+        uniform sampler2D yTexture; //输入的材质（不透明灰度，单像素）
+        uniform sampler2D uTexture;
+        uniform sampler2D vTexture;
+        void main() {
+            vec3 yuv;
+            vec3 rgb;
+            yuv.r = texture2D(yTexture, vTexCoord).r;
+            yuv.g = texture2D(uTexture, vTexCoord).r - 0.5;
+            yuv.b = texture2D(vTexture, vTexCoord).r - 0.5;
+            rgb = mat3(1.0, 1.0, 1.0,
+                       0.0, -0.39465, 2.03211,
+                       1.13983, -0.58060, 0.0) * yuv;
+            //输出像素颜色
+            gl_FragColor = vec4(rgb, 1.0);
+        }
+);
 
 static char *audio_file_path = nullptr;
 
@@ -351,6 +385,7 @@ Java_aplay_testffmpeg_SimplePlayer_nativeOpenAudio(JNIEnv *env, jobject thiz, js
         return;
     }
     SLDataLocator_OutputMix outputMix = {SL_DATALOCATOR_OUTPUTMIX, slMixObj};
+    //代表输出
     SLDataSink audioSink = {&outputMix, nullptr};
 
     /**
@@ -366,6 +401,7 @@ Java_aplay_testffmpeg_SimplePlayer_nativeOpenAudio(JNIEnv *env, jobject thiz, js
                                   SL_PCMSAMPLEFORMAT_FIXED_16,
                                   SL_SPEAKER_FRONT_LEFT | SL_SPEAKER_FRONT_RIGHT,
                                   SL_BYTEORDER_LITTLEENDIAN};
+    //代表输入
     SLDataSource audioSource = {&audioBufferQueue, &formatPcm};
 
     /**
@@ -426,4 +462,244 @@ Java_aplay_testffmpeg_SimplePlayer_nativeOpenAudio(JNIEnv *env, jobject thiz, js
         LOGE("buffer queue Enqueue buffer failed!");
         return;
     }
+}
+
+/**
+ * 初始化shader,包括顶点和片元
+ * @param code
+ * @param type
+ * @return
+ */
+GLint initShader(const char *code, GLint type) {
+    // 创建shader
+    GLint shader = glCreateShader(type);
+    if (shader == 0) {
+        LOGE("glCreateShader %d failed!", type);
+        return 0;
+    }
+    // 加载shader
+    glShaderSource(shader, 1, &code, nullptr);
+    // 编译shader
+    glCompileShader(shader);
+    //获取编译情况
+    GLint status;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
+    if (status == 0) {
+        LOGE("glCompileShader failed!");
+        return 0;
+    }
+    LOGD("glCompileShader success!");
+    return shader;
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_aplay_testffmpeg_SimplePlayer_nativeOpenYuvVideo(JNIEnv *env, jobject thiz, jstring url_, jint w, jint h, jobject surface) {
+    const char *yuv_path = env->GetStringUTFChars(url_, nullptr);
+    const int surface_w = w;
+    const int surface_h = h;
+    LOGD("YUV### yuv_path: %s ", yuv_path);
+    FILE *fp = fopen(yuv_path, "rb");
+    if (!fp) {
+        LOGE("file is null! errno = %d, reason = %s", errno, strerror(errno));
+        return;
+    }
+    //获取原始窗口
+    ANativeWindow *native_window = ANativeWindow_fromSurface(env, surface);
+
+    /**
+     * 1.EGL
+     */
+    //1-1EGL display创建并初始化
+    EGLDisplay egl_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    if (egl_display == EGL_NO_DISPLAY) {
+        LOGE("get egl display failed!");
+        return;
+    }
+    if (eglInitialize(egl_display, nullptr, nullptr) != EGL_TRUE) {
+        LOGE("egl display init failed!");
+        return;
+    }
+
+    /**
+     * 2.surface
+     */
+    //2-1surface窗口配置
+    EGLConfig egl_config;
+    EGLint cfg_num;
+    EGLint cfg_spec[] = {EGL_RED_SIZE, 8,
+                         EGL_GREEN_SIZE, 8,
+                         EGL_BLUE_SIZE, 8,
+                         EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+                         EGL_NONE};
+    if (eglChooseConfig(egl_display, cfg_spec, &egl_config, 1, &cfg_num) != EGL_TRUE) {
+        LOGE("eglChooseConfig failed!");
+        return;
+    }
+    //2-2创建surface
+    EGLSurface egl_surface = eglCreateWindowSurface(egl_display, egl_config, native_window, nullptr);
+    if (egl_surface == EGL_NO_SURFACE) {
+        LOGE("create surface failed!");
+        return;
+    }
+
+    /**
+     * 3创建关联的上下文
+     */
+    const EGLint ctxAttr[] = {EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE};
+    EGLContext egl_context = eglCreateContext(egl_display, egl_config, EGL_NO_CONTEXT, ctxAttr);
+    if (egl_context == EGL_NO_CONTEXT) {
+        LOGE("eglCreateContext failed!");
+        return;
+    }
+    if (eglMakeCurrent(egl_display, egl_surface, egl_surface, egl_context) != EGL_TRUE) {
+        LOGE("eglMakeCurrent failed!");
+        return;
+    }
+    LOGD("EGL Init success!");
+
+    //顶点shader初始化
+    GLint vsh = initShader(vertex_shader, GL_VERTEX_SHADER);
+    //片元yuv420p shader初始化
+    GLint fsh = initShader(fragment_yuv_420p, GL_FRAGMENT_SHADER);
+
+    //创建渲染程序
+    GLint program = glCreateProgram();
+    if (program == 0) {
+        LOGE("glCreateProgram failed!");
+        return;
+    }
+
+    // 将渲染程序加入着色器中
+    glAttachShader(program, vsh);
+    glAttachShader(program, fsh);
+
+    // 链接程序
+    glLinkProgram(program);
+    GLint status = 0;
+    glGetProgramiv(program, GL_LINK_STATUS, &status);
+    if (status != GL_TRUE) {
+        LOGE("glLinkProgram failed!");
+        return;
+    }
+    glUseProgram(program);
+    LOGD("glLinkProgram success.");
+
+    // 加入三维顶点数据 两个三角形组成正方形
+    static float vers[] = {1.0f, -1.0f, 0.0f,
+                           -1.0f, -1.0f, 0.0f,
+                           1.0f, 1.0f, 0.0f,
+                           -1.0f, 1.0f, 0.0f,};
+    GLint apos = glGetAttribLocation(program, "aPosition");
+    glEnableVertexAttribArray(apos);
+    // 传递顶点
+    glVertexAttribPointer(apos, 3, GL_FLOAT, GL_FALSE, 12, vers);
+
+    // 加入材质坐标数据
+    static float txts[] = {1.0f, 0.0f, //右下
+                           0.0f, 0.0f,
+                           1.0f, 1.0f,
+                           0.0, 1.0};
+    GLint atex = glGetAttribLocation(program, "aTexCoord");
+    glEnableVertexAttribArray(atex);
+    glVertexAttribPointer(atex, 2, GL_FLOAT, GL_FALSE, 8, txts);
+    /**
+     * todo 这里的宽高不是很理解，他们的数值与视频有什么关系嘛？
+     */
+    int width = 424;
+    int height = 240;
+    // 材质纹理初始化，设置纹理层
+    glUniform1i(glGetUniformLocation(program, "yTexture"), 0);//纹理第1层
+    glUniform1i(glGetUniformLocation(program, "uTexture"), 1);//纹理第2层
+    glUniform1i(glGetUniformLocation(program, "vTexture"), 2);//纹理第3层
+
+    // 创建opengl纹理
+    GLuint texts[3] = {0};
+    glGenTextures(3, texts);
+
+    // 设置第一层纹理(Y分量)属性
+    glBindTexture(GL_TEXTURE_2D, texts[0]);
+    // 缩小的过滤器
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    // 设置纹理的格式和大小
+    glTexImage2D(GL_TEXTURE_2D,
+                 0,// 细节
+                 GL_LUMINANCE, // gpu内部结构（宽度、灰度图）
+                 width,
+                 height,
+                 0,
+                 GL_LUMINANCE,// 数据的像素格式（亮度、灰度图）
+                 GL_UNSIGNED_BYTE,// 像素的数据类型
+                 nullptr/*纹理数据*/);
+
+    // 设置第二层纹理(U分量)属性
+    glBindTexture(GL_TEXTURE_2D, texts[1]);
+    // 缩小的过滤器
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    // 设置纹理的格式和大小
+    glTexImage2D(GL_TEXTURE_2D,
+                 0,// 细节
+                 GL_LUMINANCE, // gpu内部结构（宽度、灰度图）
+                 width / 2,
+                 height / 2,
+                 0,
+                 GL_LUMINANCE,// 数据的像素格式（亮度、灰度图）
+                 GL_UNSIGNED_BYTE,// 像素的数据类型
+                 nullptr/*纹理数据*/);
+
+    // 设置第三层纹理(V分量)属性
+    glBindTexture(GL_TEXTURE_2D, texts[2]);
+    // 缩小的过滤器
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    // 设置纹理的格式和大小
+    glTexImage2D(GL_TEXTURE_2D,
+                 0,// 细节
+                 GL_LUMINANCE, // gpu内部结构（宽度、灰度图）
+                 width / 2,
+                 height / 2,
+                 0,
+                 GL_LUMINANCE,// 数据的像素格式（亮度、灰度图）
+                 GL_UNSIGNED_BYTE,// 像素的数据类型
+                 nullptr/*纹理数据*/);
+
+    // 纹理的修改和显示
+    unsigned char *buf[3] = {nullptr};
+    buf[0] = new unsigned char[width * height];
+    buf[1] = new unsigned char[width * height / 4];
+    buf[2] = new unsigned char[width * height / 4];
+    while (feof(fp) == 0) {
+        /**
+         * todo 此处是逐行读取数据，那和先存取y后存取UV如何关联
+         */
+        fread(buf[0], 1, width * height, fp);
+        fread(buf[1], 1, width * height / 4, fp);
+        fread(buf[2], 1, width * height / 4, fp);
+        //激活第1层纹理，绑定到创建的opengl纹理
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, texts[0]);
+        //替换纹理内容
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_LUMINANCE, GL_UNSIGNED_BYTE, buf[0]);
+
+        //激活第2层纹理，绑定到创建的opengl纹理
+        glActiveTexture(GL_TEXTURE0 + 1);
+        glBindTexture(GL_TEXTURE_2D, texts[1]);
+        //替换纹理内容
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width / 2, height / 2, GL_LUMINANCE, GL_UNSIGNED_BYTE, buf[1]);
+
+        //激活第3层纹理，绑定到创建的opengl纹理
+        glActiveTexture(GL_TEXTURE0 + 2);
+        glBindTexture(GL_TEXTURE_2D, texts[2]);
+        //替换纹理内容
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width / 2, height / 2, GL_LUMINANCE, GL_UNSIGNED_BYTE, buf[2]);
+
+        //三维绘制
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        //交换缓冲区执行绘制
+        eglSwapBuffers(egl_display, egl_surface);
+    }
+    LOGW("===nativeOpenYuvVideo finish===");
+    env->ReleaseStringUTFChars(url_, yuv_path);
 }

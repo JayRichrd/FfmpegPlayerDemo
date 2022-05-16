@@ -1,4 +1,5 @@
 package aplay.testffmpeg
+
 import android.util.Log
 import android.view.Surface
 import java.io.File
@@ -19,6 +20,16 @@ class SimplePlayer {
 
     fun openVideo(url: String, w: Int, h: Int, surface: Surface) {
         nativeOpenVideo(url, w, h, surface)
+    }
+
+    fun openYuvVideo(url: String, w: Int, h: Int, surface: Surface) {
+        Log.d(TAG, "openAudio: url = $url")
+        val file = File(url)
+        if (!file.exists()) {
+            Log.e(TAG, "openAudio: file[$url] does not exist!")
+            return
+        }
+        nativeOpenYuvVideo(url, w, h, surface)
     }
 
     fun openAudio(url: String) {
@@ -42,4 +53,6 @@ class SimplePlayer {
      * @param url 音频路径
      */
     private external fun nativeOpenAudio(url: String)
+
+    private external fun nativeOpenYuvVideo(url: String, w: Int, h: Int, surface: Surface)
 }

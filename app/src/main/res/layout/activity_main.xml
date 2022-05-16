@@ -33,4 +33,13 @@
         app:layout_constraintRight_toRightOf="parent"
         app:layout_constraintTop_toBottomOf="@id/btv_video_activity" />
 
+    <androidx.appcompat.widget.AppCompatButton
+        android:id="@+id/btv_yuv_video_activity"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="yuv video activity"
+        app:layout_constraintLeft_toLeftOf="parent"
+        app:layout_constraintRight_toRightOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/btv_audio_activity" />
+
 </androidx.constraintlayout.widget.ConstraintLayout>
