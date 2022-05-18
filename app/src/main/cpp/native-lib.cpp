@@ -262,9 +262,8 @@ Java_aplay_testffmpeg_SimplePlayer_nativeOpenVideo(JNIEnv *env, jobject thiz, js
     // 音频重采样
     SwrContext *actx = swr_alloc();
     actx = swr_alloc_set_opts(actx,
-                              av_get_default_channel_layout(ac->channels), AV_SAMPLE_FMT_S16, ac->sample_rate,
-                              av_get_default_channel_layout(ac->channels), ac->sample_fmt,
-                              ac->sample_rate,
+                              av_get_default_channel_layout(ac->channels), AV_SAMPLE_FMT_S16, ac->sample_rate,/*输出*/
+                              av_get_default_channel_layout(ac->channels), ac->sample_fmt, ac->sample_rate,/*输入*/
                               0, nullptr);
     re = swr_init(actx);
     if (re != 0) {
@@ -297,14 +296,15 @@ Java_aplay_testffmpeg_SimplePlayer_nativeOpenVideo(JNIEnv *env, jobject thiz, js
         }
         av_packet_unref(pkt);
         //接收frame
+        // todo 此处会马上接收到解码的数据嘛？
         int receiveFrameResult = avcodec_receive_frame(cc, frame);
         while (receiveFrameResult == 0) {
             if (cc == vc) {
                 //LOGD("frame(%p)[pts: %lld, dts: %lld, size: %d]", frame, frame->pts, frame->pkt_dts, frame->pkt_size);
                 frameCount++;
                 vctx = sws_getCachedContext(vctx,
-                                            frame->width, frame->height, static_cast<AVPixelFormat>(frame->format),
-                                            rgba_dst_frame->width, rgba_dst_frame->height, (AVPixelFormat) rgba_dst_frame->format,
+                                            frame->width, frame->height, static_cast<AVPixelFormat>(frame->format),/*输入*/
+                                            rgba_dst_frame->width, rgba_dst_frame->height, (AVPixelFormat) rgba_dst_frame->format,/*输出*/
                                             SWS_FAST_BILINEAR, nullptr, nullptr, nullptr);
                 if (!vctx) {
                     LOGE("sws_getCachedContext failed!");

@@ -12,12 +12,15 @@ import android.view.SurfaceView;
 
 import com.blankj.utilcode.util.SDCardUtils;
 
+import javax.microedition.khronos.egl.EGLConfig;
+import javax.microedition.khronos.opengles.GL10;
+
 /**
  * author : cainjiang
  * date : 2022/5/11
  * description :
  */
-public class GLSurfaceVideoView extends GLSurfaceView implements Runnable {
+public class GLSurfaceVideoView extends GLSurfaceView implements Runnable, GLSurfaceView.Renderer {
     public static final String TAG = "GLSurfaceVideoView";
     private int w = 0;
     private int h = 0;
@@ -33,6 +36,7 @@ public class GLSurfaceVideoView extends GLSurfaceView implements Runnable {
     @Override
     public void surfaceCreated(SurfaceHolder holder) {
         Log.d(TAG, "surfaceCreated:");
+        setRenderer(this);
         tryStart();
     }
 
@@ -55,5 +59,20 @@ public class GLSurfaceVideoView extends GLSurfaceView implements Runnable {
             return;
         }
         new Thread(this).start();
+    }
+
+    @Override
+    public void onSurfaceCreated(GL10 gl, EGLConfig config) {
+        Log.i(TAG, "onSurfaceCreated: gl = " + gl.toString());
+    }
+
+    @Override
+    public void onSurfaceChanged(GL10 gl, int width, int height) {
+        Log.i(TAG, "onSurfaceChanged: gl = " + gl.toString() + " width = " + width + " height = " + height);
+    }
+
+    @Override
+    public void onDrawFrame(GL10 gl) {
+        Log.i(TAG, "onDrawFrame: gl = " + gl.toString());
     }
 }

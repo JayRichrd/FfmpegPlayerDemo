@@ -8,12 +8,15 @@ import android.util.AttributeSet;
 import android.util.Log;
 import android.view.SurfaceHolder;
 
+import javax.microedition.khronos.egl.EGLConfig;
+import javax.microedition.khronos.opengles.GL10;
+
 /**
  * author : cainjiang
  * date : 2022/5/11
  * description :
  */
-public class YuvGLSurfaceVideoView extends GLSurfaceView implements Runnable {
+public class YuvGLSurfaceVideoView extends GLSurfaceView implements Runnable,GLSurfaceView.Renderer {
     public static final String TAG = "YuvGLSurfaceVideoView";
     private int w = 0;
     private int h = 0;
@@ -29,6 +32,7 @@ public class YuvGLSurfaceVideoView extends GLSurfaceView implements Runnable {
     @Override
     public void surfaceCreated(SurfaceHolder holder) {
         Log.d(TAG, "surfaceCreated:");
+        setRenderer(this);
         tryStart();
     }
 
@@ -51,5 +55,20 @@ public class YuvGLSurfaceVideoView extends GLSurfaceView implements Runnable {
             return;
         }
         new Thread(this).start();
+    }
+
+    @Override
+    public void onSurfaceCreated(GL10 gl, EGLConfig config) {
+
+    }
+
+    @Override
+    public void onSurfaceChanged(GL10 gl, int width, int height) {
+
+    }
+
+    @Override
+    public void onDrawFrame(GL10 gl) {
+
     }
 }
